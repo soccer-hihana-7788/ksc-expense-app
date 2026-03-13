@@ -10,21 +10,25 @@ st.set_page_config(page_title="KSC経費管理アプリ", layout="centered")
 # 2. Google Sheets 認証設定
 scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 
-# Secretsから辞書形式で取得し、改行コードの不具合を修正
-conf = st.secrets["gcp_service_account"].to_dict()
-if "private_key" in conf:
-    # 貼り付け時に \n がエスケープされてしまう問題を解決
-    conf["private_key"] = conf["private_key"].replace("\\n", "\n")
-
 try:
+    # Secretsから辞書形式で取得
+    conf = st.secrets["gcp_service_account"].to_dict()
+    
+    # 秘密鍵の改行問題を強制解決する処理
+    if "private_key" in conf:
+        raw_key = conf["private_key"]
+        # \n という文字列を実際の改行に変換し、前後の不要な空白を削除
+        formatted_key = raw_key.replace("\\n", "\n").strip()
+        conf["private_key"] = formatted_key
+
     credentials = Credentials.from_service_account_info(conf, scopes=scope)
     gc = gspread.authorize(credentials)
 
-    # スプレッドシートをIDで開く
+    # スプレッドシートを開く
     SP_SHEET_KEY = st.secrets["spreadsheet"]["key"]
     sh = gc.open_by_key(SP_SHEET_KEY)
     
-    # シート名の指定（スプレッドシートのタブ名と一致させてください）
+    # ワークシート名の指定（もしエラーならここを「シート1」などに変更）
     worksheet = sh.worksheet("transport_log")
 
 except Exception as e:
@@ -70,14 +74,12 @@ if check_password():
         
         if submitted:
             try:
-                # スプレッドシートに書き込み
                 now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
                 worksheet.append_row([now, str(date), category, amount, description])
                 st.success("データを保存しました！")
             except Exception as e:
                 st.error(f"保存に失敗しました: {e}")
 
-    # 履歴の表示
     if st.button("履歴を表示"):
         try:
             data = worksheet.get_all_records()
