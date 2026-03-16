@@ -59,20 +59,22 @@ if "current_user" not in st.session_state or not st.session_state["current_user"
 try:
     scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     
-    # Secretsから取得を試み、なければローカルファイルを探す
     if "gcp_service_account" in st.secrets:
+        # Streamlit Cloud環境
         creds_dict = dict(st.secrets["gcp_service_account"])
-        # 改行コードの処理（private_keyの読み込みエラー対策）
+        # 秘密鍵の改行処理
         creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
     else:
-        key_file = "credentials.json" if os.path.exists("credentials.json") else "credentials"
+        # ローカル開発環境用
+        key_file = "ksc-cash-app-7b96a6f1774a.json" if os.path.exists("ksc-cash-app-7b96a6f1774a.json") else "credentials.json"
         credentials = Credentials.from_service_account_file(key_file, scopes=scope)
         
     gc = gspread.authorize(credentials)
+    # スプレッドシートIDは変更なし
     sh = gc.open_by_key("1yVYajQm6KeaoppB3KMaHismS-95NWxGGfie9DhDEEgk")
 except Exception as e:
-    st.error(f"接続エラー: Secretsの設定を確認してください。({e})")
+    st.error(f"接続エラー: Secretsの設定またはスプレッドシートの権限を確認してください。({e})")
     st.stop()
 
 # --- 3. サイドバー・メイン画面 ---
@@ -90,7 +92,7 @@ st.title("KSC経費申請管理ツール")
 form_type = st.radio("申請書種別を選択してください", ["KSC 交通費清算書", "KSC 日当清算書 兼 受領書"], horizontal=True)
 st.markdown("---")
 
-# A/B 申請保存ロジック
+# 申請保存ロジック (A. 交通費)
 if form_type == "KSC 交通費清算書":
     st.header("🚗 KSC 交通費清算書")
     with st.form("transport_form", clear_on_submit=True):
@@ -106,6 +108,8 @@ if form_type == "KSC 交通費清算書":
                 ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state["current_user"], str(date), dest, purp, int(amt), rem])
                 st.success("データを保存しました！"); st.rerun()
             except Exception as e: st.error(f"保存失敗: {e}")
+
+# 申請保存ロジック (B. 日当)
 else:
     st.header("📋 KSC 日当清算書 兼 受領書")
     with st.form("allowance_form", clear_on_submit=True):
@@ -152,6 +156,7 @@ try:
             display_df[date_col] = display_df[date_col].dt.strftime('%Y-%m-%d')
             st.dataframe(display_df, use_container_width=True, hide_index=True)
 
+            # PDF印刷機能
             if st.button("🖨️ PDF印刷プレビューを表示"):
                 table_html = display_df.to_html(index=False, border=1)
                 print_script = f"""
@@ -188,4 +193,6 @@ try:
                                     st.session_state[f"editing_{idx}"] = False; st.rerun()
                         if st.button("キャンセル", key=f"cancel_{idx}"):
                             st.session_state[f"editing_{idx}"] = False; st.rerun()
+        else:
+            st.info("データがありません。")
 except Exception as e: st.error(f"エラー: {e}")
