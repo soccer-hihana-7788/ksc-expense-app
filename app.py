@@ -55,31 +55,24 @@ if "current_user" not in st.session_state or not st.session_state["current_user"
         st.rerun()
     st.stop()
 
-# --- 2. Google Sheets 認証設定 (Secrets対応版) ---
+# --- 2. Google Sheets 認証設定 ---
 try:
     scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    
     if "gcp_service_account" in st.secrets:
-        # Streamlit Cloud環境
         creds_dict = dict(st.secrets["gcp_service_account"])
-        # 秘密鍵の改行処理
         creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
     else:
-        # ローカル開発環境用
         key_file = "ksc-cash-app-7b96a6f1774a.json" if os.path.exists("ksc-cash-app-7b96a6f1774a.json") else "credentials.json"
         credentials = Credentials.from_service_account_file(key_file, scopes=scope)
-        
     gc = gspread.authorize(credentials)
-    # スプレッドシートIDは変更なし
     sh = gc.open_by_key("1yVYajQm6KeaoppB3KMaHismS-95NWxGGfie9DhDEEgk")
 except Exception as e:
-    st.error(f"接続エラー: Secretsの設定またはスプレッドシートの権限を確認してください。({e})")
+    st.error(f"接続エラー: {e}")
     st.stop()
 
 # --- 3. サイドバー・メイン画面 ---
 st.sidebar.write(f"ログイン中の氏名: **{st.session_state['current_user']}**")
-
 if st.sidebar.button("ユーザー変更"):
     cookies["current_user"] = ""
     cookies.save(); st.session_state["current_user"] = None; st.rerun()
@@ -108,8 +101,6 @@ if form_type == "KSC 交通費清算書":
                 ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state["current_user"], str(date), dest, purp, int(amt), rem])
                 st.success("データを保存しました！"); st.rerun()
             except Exception as e: st.error(f"保存失敗: {e}")
-
-# 申請保存ロジック (B. 日当)
 else:
     st.header("📋 KSC 日当清算書 兼 受領書")
     with st.form("allowance_form", clear_on_submit=True):
@@ -134,36 +125,42 @@ try:
     current_ws_name = "transport_log" if form_type == "KSC 交通費清算書" else "allowance_log"
     ws = sh.worksheet(current_ws_name)
     all_records = ws.get_all_records()
-    
     if all_records:
         df_all = pd.DataFrame(all_records)
         df_all['row_idx'] = range(2, len(df_all) + 2)
         df_user = df_all[df_all["氏名"] == st.session_state["current_user"]].copy()
-        
         if not df_user.empty:
             date_col = '日付' if form_type == "KSC 交通費清算書" else '日時'
             df_user[date_col] = pd.to_datetime(df_user[date_col])
-            
             st.write("📅 表示範囲を指定して印刷/表示")
             col_d1, col_d2 = st.columns(2)
             with col_d1: start_date = st.date_input("開始日", df_user[date_col].min().date())
             with col_d2: end_date = st.date_input("終了日", df_user[date_col].max().date())
-            
             mask = (df_user[date_col].dt.date >= start_date) & (df_user[date_col].dt.date <= end_date)
             df_filtered = df_user.loc[mask].sort_values(by=date_col, ascending=False)
-            
             display_df = df_filtered.drop(columns=['row_idx'])
             display_df[date_col] = display_df[date_col].dt.strftime('%Y-%m-%d')
             st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-            # PDF印刷機能
+            # --- 印刷プレビューのバランス調整修正 ---
             if st.button("🖨️ PDF印刷プレビューを表示"):
                 table_html = display_df.to_html(index=False, border=1)
                 print_script = f"""
-                <html><head><style>body{{font-family:sans-serif; padding:20px;}} table{{width:100%; border-collapse:collapse;}} th,td{{border:1px solid #000; padding:10px;}} h2{{text-align:center;}}</style></head>
+                <html><head><style>
+                    body{{font-family:sans-serif; padding:10px; font-size: 12px;}}
+                    table{{width:100%; border-collapse:collapse; table-layout: fixed; word-break: break-all;}}
+                    th,td{{border:1px solid #000; padding:8px; text-align:center;}}
+                    th{{background-color: #f2f2f2;}}
+                    /* 各列の幅を調整して1行に収める */
+                    th:nth-child(1), td:nth-child(1) {{ width: 120px; }} /* 申請日時 */
+                    th:nth-child(2), td:nth-child(2) {{ width: 60px; white-space: nowrap; }} /* 氏名 */
+                    th:nth-child(3), td:nth-child(3) {{ width: 85px; white-space: nowrap; }} /* 日付 */
+                    th:nth-child(7), td:nth-child(7) {{ width: auto; text-align: left; }} /* 備考 */
+                    h2{{text-align:center;}}
+                </style></head>
                 <body><h2>経費精算書 ({form_type})</h2><p>氏名: {st.session_state['current_user']} / 期間: {start_date} ～ {end_date}</p>{table_html}<script>window.print();</script></body></html>
                 """
-                st.components.v1.html(print_script, height=400, scrolling=True)
+                st.components.v1.html(print_script, height=500, scrolling=True)
 
             st.markdown("---")
             st.write("🔧 個別データの修正・削除")
@@ -174,7 +171,6 @@ try:
                     if cols[1].button("削除", key=f"del_{idx}"):
                         ws.delete_rows(int(row['row_idx'])); st.rerun()
                     if cols[0].button("修正", key=f"edit_{idx}"): st.session_state[f"editing_{idx}"] = True
-
                     if st.session_state.get(f"editing_{idx}"):
                         with st.form(f"edit_form_{idx}"):
                             if form_type == "KSC 交通費清算書":
@@ -193,6 +189,5 @@ try:
                                     st.session_state[f"editing_{idx}"] = False; st.rerun()
                         if st.button("キャンセル", key=f"cancel_{idx}"):
                             st.session_state[f"editing_{idx}"] = False; st.rerun()
-        else:
-            st.info("データがありません。")
+        else: st.info("データがありません。")
 except Exception as e: st.error(f"エラー: {e}")
