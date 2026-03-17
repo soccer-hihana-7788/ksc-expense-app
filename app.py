@@ -58,7 +58,8 @@ if "current_user" not in st.session_state or not st.session_state["current_user"
     st.stop()
 
 # --- 2. Google Sheets 認証設定 ---
-try:
+@st.cache_resource
+def get_gspread_client():
     scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     if "gcp_service_account" in st.secrets:
         creds_dict = dict(st.secrets["gcp_service_account"])
@@ -67,7 +68,10 @@ try:
     else:
         key_file = "ksc-cash-app-7b96a6f1774a.json" if os.path.exists("ksc-cash-app-7b96a6f1774a.json") else "credentials.json"
         credentials = Credentials.from_service_account_file(key_file, scopes=scope)
-    gc = gspread.authorize(credentials)
+    return gspread.authorize(credentials)
+
+try:
+    gc = get_gspread_client()
     sh = gc.open_by_key("1yVYajQm6KeaoppB3KMaHismS-95NWxGGfie9DhDEEgk")
 except Exception as e:
     st.error(f"接続エラー: {e}")
@@ -79,7 +83,6 @@ if st.sidebar.button("ユーザー変更"):
     cookies["current_user"] = ""
     cookies.save(); st.session_state["current_user"] = None; st.rerun()
 
-# ログアウトボタンを復旧
 if st.sidebar.button("ログアウト"):
     cookies["auth_status"] = ""; cookies["current_user"] = ""; cookies["login_expire"] = ""
     cookies.save(); st.session_state["password_correct"] = False; st.session_state["current_user"] = None; st.rerun()
@@ -102,6 +105,7 @@ if form_type == "KSC 交通費清算書":
             try:
                 ws = sh.worksheet("transport_log")
                 ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state["current_user"], str(date), dest, purp, int(amt), rem])
+                st.cache_data.clear() # キャッシュをクリアして最新化
                 st.success("データを保存しました！"); st.rerun()
             except Exception as e: st.error(f"保存失敗: {e}")
 
@@ -139,17 +143,22 @@ else:
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state["current_user"], 
                 str(dt), cont, int(amt), "済" if c_c else "未", sig_name, sig_b64
             ])
+            st.cache_data.clear() # キャッシュをクリアして最新化
             st.success("データを保存しました！"); st.rerun()
         except Exception as e: st.error(f"保存失敗: {e}")
 
 # --- 4. 履歴表示・印刷・修正 ---
+@st.cache_data(ttl=60) # 60秒間はAPIを叩かずキャッシュを使用
+def fetch_records(sheet_name):
+    ws = sh.worksheet(sheet_name)
+    return ws.get_all_records()
+
 st.markdown("---")
 st.subheader(f"📊 {st.session_state['current_user']} 様の申請済み一覧")
 
 try:
     current_ws_name = "transport_log" if form_type == "KSC 交通費清算書" else "allowance_log"
-    ws = sh.worksheet(current_ws_name)
-    all_records = ws.get_all_records()
+    all_records = fetch_records(current_ws_name)
     
     if all_records:
         df_all = pd.DataFrame(all_records)
@@ -166,14 +175,12 @@ try:
             mask = (df_user[date_col].dt.date >= start_date) & (df_user[date_col].dt.date <= end_date)
             df_filtered = df_user.loc[mask].sort_values(by=date_col, ascending=False)
             
-            # 一覧表表示（署名は除く）
             display_df = df_filtered.drop(columns=['row_idx'])
             if '確認(臨時コーチ署名)' in display_df.columns:
                 display_df = display_df.drop(columns=['確認(臨時コーチ署名)'])
             display_df[date_col] = display_df[date_col].dt.strftime('%Y-%m-%d')
             st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-            # PDF印刷プレビュー
             if st.button("🖨️ PDF印刷プレビューを表示"):
                 rows_html = ""
                 headers = display_df.columns.tolist()
@@ -198,14 +205,16 @@ try:
                 st.components.v1.html(print_script, height=500, scrolling=True)
 
             st.markdown("---")
-            # --- 個別データの修正・削除ボタンを復旧 ---
             st.write("🔧 個別データの修正・削除")
+            ws_to_edit = sh.worksheet(current_ws_name) # 更新用
             for idx, row in df_filtered.iterrows():
                 row_date_str = row[date_col].strftime('%Y-%m-%d')
                 with st.expander(f"📌 {row_date_str} - {row.get('行先') or row.get('臨時コーチ依頼内容')} ({row['金額']}円)"):
                     cols = st.columns([1, 1, 8])
                     if cols[1].button("削除", key=f"del_{idx}"):
-                        ws.delete_rows(int(row['row_idx'])); st.rerun()
+                        ws_to_edit.delete_rows(int(row['row_idx']))
+                        st.cache_data.clear()
+                        st.rerun()
                     if cols[0].button("修正", key=f"edit_{idx}"):
                         st.session_state[f"editing_{idx}"] = True
 
@@ -216,18 +225,19 @@ try:
                                 n_p = st.text_input("目的", row['目的']); n_a = st.number_input("金額", value=int(row['金額']))
                                 n_r = st.text_area("備考", row['備考'])
                                 if st.form_submit_button("更新"):
-                                    ws.update(f"A{row['row_idx']}:G{row['row_idx']}", [[datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row['氏名'], str(n_d), n_ds, n_p, int(n_a), n_r]])
+                                    ws_to_edit.update(f"A{row['row_idx']}:G{row['row_idx']}", [[datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row['氏名'], str(n_d), n_ds, n_p, int(n_a), n_r]])
+                                    st.cache_data.clear()
                                     st.session_state[f"editing_{idx}"] = False; st.rerun()
                             else:
                                 n_dt = st.date_input("日時", row[date_col]); n_c = st.text_area("臨時コーチ依頼内容", row['臨時コーチ依頼内容'])
                                 n_a = st.number_input("金額", value=int(row['金額']))
                                 n_cc = st.checkbox("確認(コーチ)", row['確認(コーチ)']=="済")
                                 if st.form_submit_button("更新"):
-                                    # 日当の修正（署名などは元のまま維持する簡易更新）
-                                    ws.update_cell(row['row_idx'], 3, str(n_dt))
-                                    ws.update_cell(row['row_idx'], 4, n_c)
-                                    ws.update_cell(row['row_idx'], 5, int(n_a))
-                                    ws.update_cell(row['row_idx'], 6, "済" if n_cc else "未")
+                                    ws_to_edit.update_cell(row['row_idx'], 3, str(n_dt))
+                                    ws_to_edit.update_cell(row['row_idx'], 4, n_c)
+                                    ws_to_edit.update_cell(row['row_idx'], 5, int(n_a))
+                                    ws_to_edit.update_cell(row['row_idx'], 6, "済" if n_cc else "未")
+                                    st.cache_data.clear()
                                     st.session_state[f"editing_{idx}"] = False; st.rerun()
                         if st.button("キャンセル", key=f"cancel_{idx}"):
                             st.session_state[f"editing_{idx}"] = False; st.rerun()
