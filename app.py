@@ -35,7 +35,7 @@ def check_auth():
     password = st.text_input("パスワード", type="password")
     if st.button("ログイン"):
         if user_id == "KSC" and password == "kuma2019":
-            expire_date = datetime.now() + timedelta(hours=2)
+            expire_date = datetime.now() + timedelta(hours=2) # 2時間維持
             cookies["auth_status"] = "ok"
             cookies["login_expire"] = expire_date.isoformat()
             cookies.save()
@@ -73,16 +73,22 @@ except Exception as e:
     st.error(f"接続エラー: {e}")
     st.stop()
 
-# --- 3. メイン画面 ---
+# --- 3. サイドバー ---
 st.sidebar.write(f"ログイン中の氏名: **{st.session_state['current_user']}**")
 if st.sidebar.button("ユーザー変更"):
     cookies["current_user"] = ""
     cookies.save(); st.session_state["current_user"] = None; st.rerun()
 
+# ログアウトボタンを復旧
+if st.sidebar.button("ログアウト"):
+    cookies["auth_status"] = ""; cookies["current_user"] = ""; cookies["login_expire"] = ""
+    cookies.save(); st.session_state["password_correct"] = False; st.session_state["current_user"] = None; st.rerun()
+
 st.title("KSC経費申請管理ツール")
 form_type = st.radio("申請書種別を選択してください", ["KSC 交通費清算書", "KSC 日当清算書 兼 受領書"], horizontal=True)
 st.markdown("---")
 
+# 申請保存ロジック (A. 交通費)
 if form_type == "KSC 交通費清算書":
     st.header("🚗 KSC 交通費清算書")
     with st.form("transport_form", clear_on_submit=True):
@@ -99,18 +105,17 @@ if form_type == "KSC 交通費清算書":
                 st.success("データを保存しました！"); st.rerun()
             except Exception as e: st.error(f"保存失敗: {e}")
 
+# 申請保存ロジック (B. 日当)
 else:
     st.header("📋 KSC 日当清算書 兼 受領書")
     dt = st.date_input("日時", datetime.now())
     cont = st.text_area("臨時コーチ依頼内容")
     amt = st.number_input("金額 (円)", min_value=0, step=1)
     c_c = st.checkbox("確認 (コーチ)")
-    
-    # 修正：確認(臨時コーチ)のフロー
     c_t = st.checkbox("確認 (臨時コーチ)")
+    
     sig_name = ""
     sig_b64 = ""
-    
     if c_t:
         st.write("🖋️ **臨時コーチ署名**")
         sig_name = st.text_input("確認(臨時コーチ氏名)を入力してください")
@@ -130,7 +135,6 @@ else:
     if st.button("スプレッドシートに保存"):
         try:
             ws = sh.worksheet("allowance_log")
-            # 修正：新設列に合わせて保存。列順：申請日時, 氏名, 日時, 内容, 金額, 確認(コーチ), 確認(臨時コーチ氏名), 確認(臨時コーチ署名)
             ws.append_row([
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state["current_user"], 
                 str(dt), cont, int(amt), "済" if c_c else "未", sig_name, sig_b64
@@ -146,10 +150,12 @@ try:
     current_ws_name = "transport_log" if form_type == "KSC 交通費清算書" else "allowance_log"
     ws = sh.worksheet(current_ws_name)
     all_records = ws.get_all_records()
+    
     if all_records:
         df_all = pd.DataFrame(all_records)
         df_all['row_idx'] = range(2, len(df_all) + 2)
         df_user = df_all[df_all["氏名"] == st.session_state["current_user"]].copy()
+        
         if not df_user.empty:
             date_col = '日付' if form_type == "KSC 交通費清算書" else '日時'
             df_user[date_col] = pd.to_datetime(df_user[date_col])
@@ -160,46 +166,70 @@ try:
             mask = (df_user[date_col].dt.date >= start_date) & (df_user[date_col].dt.date <= end_date)
             df_filtered = df_user.loc[mask].sort_values(by=date_col, ascending=False)
             
-            # 署名データは表には出さない
+            # 一覧表表示（署名は除く）
             display_df = df_filtered.drop(columns=['row_idx'])
             if '確認(臨時コーチ署名)' in display_df.columns:
                 display_df = display_df.drop(columns=['確認(臨時コーチ署名)'])
-            
             display_df[date_col] = display_df[date_col].dt.strftime('%Y-%m-%d')
             st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-            # 修正：PDF印刷プレビューへの署名反映
+            # PDF印刷プレビュー
             if st.button("🖨️ PDF印刷プレビューを表示"):
                 rows_html = ""
                 headers = display_df.columns.tolist()
                 if form_type == "KSC 日当清算書 兼 受領書": headers.append("確認(臨時コーチ署名)")
-                
-                # ヘッダー作成
                 rows_html += "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
-                
-                # データ行作成
                 for idx, row in df_filtered.iterrows():
                     cells = [row[date_col].strftime('%Y-%m-%d') if c == date_col else row[c] for c in display_df.columns]
                     row_html = "".join(f"<td>{c}</td>" for c in cells)
-                    
                     if form_type == "KSC 日当清算書 兼 受領書":
                         sig = row.get('確認(臨時コーチ署名)', '')
                         sig_img = f'<img src="data:image/png;base64,{sig}" style="height:40px;">' if sig else ""
                         row_html += f"<td>{sig_img}</td>"
                     rows_html += f"<tr>{row_html}</tr>"
-
                 print_script = f"""
                 <html><head><style>
                     body{{font-family:sans-serif; padding:10px; font-size: 11px;}}
                     table{{width:100%; border-collapse:collapse; table-layout: fixed; word-break: break-all;}}
                     th,td{{border:1px solid #000; padding:5px; text-align:center; height: 50px;}}
-                    th{{background-color: #f2f2f2;}}
-                    h2{{text-align:center;}}
-                </style></head>
-                <body><h2>経費精算書 ({form_type})</h2><p>氏名: {st.session_state['current_user']} / 期間: {start_date} ～ {end_date}</p>
-                <table>{rows_html}</table><script>window.print();</script></body></html>
+                    th{{background-color: #f2f2f2;}} h2{{text-align:center;}}
+                </style></head><body><h2>経費精算書 ({form_type})</h2><table>{rows_html}</table><script>window.print();</script></body></html>
                 """
                 st.components.v1.html(print_script, height=500, scrolling=True)
 
-            # 修正・削除機能（省略：前回の構成を維持）
+            st.markdown("---")
+            # --- 個別データの修正・削除ボタンを復旧 ---
+            st.write("🔧 個別データの修正・削除")
+            for idx, row in df_filtered.iterrows():
+                row_date_str = row[date_col].strftime('%Y-%m-%d')
+                with st.expander(f"📌 {row_date_str} - {row.get('行先') or row.get('臨時コーチ依頼内容')} ({row['金額']}円)"):
+                    cols = st.columns([1, 1, 8])
+                    if cols[1].button("削除", key=f"del_{idx}"):
+                        ws.delete_rows(int(row['row_idx'])); st.rerun()
+                    if cols[0].button("修正", key=f"edit_{idx}"):
+                        st.session_state[f"editing_{idx}"] = True
+
+                    if st.session_state.get(f"editing_{idx}"):
+                        with st.form(f"edit_form_{idx}"):
+                            if form_type == "KSC 交通費清算書":
+                                n_d = st.date_input("日付", row[date_col]); n_ds = st.text_input("行先", row['行先'])
+                                n_p = st.text_input("目的", row['目的']); n_a = st.number_input("金額", value=int(row['金額']))
+                                n_r = st.text_area("備考", row['備考'])
+                                if st.form_submit_button("更新"):
+                                    ws.update(f"A{row['row_idx']}:G{row['row_idx']}", [[datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row['氏名'], str(n_d), n_ds, n_p, int(n_a), n_r]])
+                                    st.session_state[f"editing_{idx}"] = False; st.rerun()
+                            else:
+                                n_dt = st.date_input("日時", row[date_col]); n_c = st.text_area("臨時コーチ依頼内容", row['臨時コーチ依頼内容'])
+                                n_a = st.number_input("金額", value=int(row['金額']))
+                                n_cc = st.checkbox("確認(コーチ)", row['確認(コーチ)']=="済")
+                                if st.form_submit_button("更新"):
+                                    # 日当の修正（署名などは元のまま維持する簡易更新）
+                                    ws.update_cell(row['row_idx'], 3, str(n_dt))
+                                    ws.update_cell(row['row_idx'], 4, n_c)
+                                    ws.update_cell(row['row_idx'], 5, int(n_a))
+                                    ws.update_cell(row['row_idx'], 6, "済" if n_cc else "未")
+                                    st.session_state[f"editing_{idx}"] = False; st.rerun()
+                        if st.button("キャンセル", key=f"cancel_{idx}"):
+                            st.session_state[f"editing_{idx}"] = False; st.rerun()
+        else: st.info("データがありません。")
 except Exception as e: st.error(f"エラー: {e}")
