@@ -95,6 +95,7 @@ st.markdown("---")
 # 申請保存ロジック (A. 交通費)
 if form_type == "KSC 交通費清算書":
     st.header("🚗 KSC 交通費清算書")
+    # clear_on_submit=Trueで送信後クリアを有効化
     with st.form("transport_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
@@ -107,46 +108,50 @@ if form_type == "KSC 交通費清算書":
                 ws = sh.worksheet("transport_log")
                 ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state["current_user"], str(date), dest, purp, int(amt), rem])
                 st.cache_data.clear()
-                st.success("データを保存しました！"); st.rerun()
+                st.success("データを保存しました！入力内容をクリアします。")
+                time.sleep(1) # メッセージ確認用
+                st.rerun() # 再読み込みでフォームを完全に初期化
             except Exception as e: st.error(f"保存失敗: {e}")
 
 # 申請保存ロジック (B. 日当)
 else:
     st.header("📋 KSC 日当清算書 兼 受領書")
-    dt = st.date_input("日時", datetime.now())
-    cont = st.text_area("臨時コーチ依頼内容")
-    amt = st.number_input("金額 (円)", min_value=0, step=1)
-    c_c = st.checkbox("確認 (コーチ)")
-    c_t = st.checkbox("確認 (臨時コーチ)")
-    
-    sig_name = ""
-    sig_b64 = ""
-    if c_t:
-        st.write("🖋️ **臨時コーチ署名**")
+    # 日当側も確実にクリアするため、状態管理用のkeyを設定したformを使用
+    with st.form("allowance_form_new", clear_on_submit=True):
+        dt = st.date_input("日時", datetime.now())
+        cont = st.text_area("臨時コーチ依頼内容")
+        amt = st.number_input("金額 (円)", min_value=0, step=1)
+        c_c = st.checkbox("確認 (コーチ)")
+        c_t = st.checkbox("確認 (臨時コーチ)")
+        
+        st.write("🖋️ **臨時コーチ署名** ※「確認(臨時コーチ)」にチェックを入れた場合のみ有効")
         sig_name = st.text_input("確認(臨時コーチ氏名)を入力してください")
         canvas_result = st_canvas(
             fill_color="rgba(255, 255, 255, 1)", stroke_width=2, stroke_color="#000",
-            background_color="#fff", height=120, width=300, drawing_mode="freedraw", key="canvas_allowance"
+            background_color="#fff", height=120, width=300, drawing_mode="freedraw", key="canvas_allowance_new"
         )
-        if canvas_result.image_data is not None:
-            import numpy as np
-            from PIL import Image
-            import io
-            img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
-            buffered = io.BytesIO()
-            img.save(buffered, format="PNG")
-            sig_b64 = base64.b64encode(buffered.getvalue()).decode()
+        
+        if st.form_submit_button("スプレッドシートに保存"):
+            try:
+                sig_b64 = ""
+                if c_t and canvas_result.image_data is not None:
+                    from PIL import Image
+                    import io
+                    img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
+                    buffered = io.BytesIO()
+                    img.save(buffered, format="PNG")
+                    sig_b64 = base64.b64encode(buffered.getvalue()).decode()
 
-    if st.button("スプレッドシートに保存"):
-        try:
-            ws = sh.worksheet("allowance_log")
-            ws.append_row([
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state["current_user"], 
-                str(dt), cont, int(amt), "済" if c_c else "未", sig_name, sig_b64
-            ])
-            st.cache_data.clear()
-            st.success("データを保存しました！"); st.rerun()
-        except Exception as e: st.error(f"保存失敗: {e}")
+                ws = sh.worksheet("allowance_log")
+                ws.append_row([
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state["current_user"], 
+                    str(dt), cont, int(amt), "済" if c_c else "未", sig_name, sig_b64
+                ])
+                st.cache_data.clear()
+                st.success("データを保存しました！入力内容をクリアします。")
+                time.sleep(1)
+                st.rerun() # 再読み込みでフォーム・署名を初期化
+            except Exception as e: st.error(f"保存失敗: {e}")
 
 # --- 4. 履歴表示・印刷・修正 ---
 @st.cache_data(ttl=60)
@@ -197,30 +202,22 @@ try:
                         row_html += f"<td>{sig_img}</td>"
                     rows_html += f"<tr>{row_html}</tr>"
 
-                # 改善：文字サイズ調整と2回目動作不備の解消用タイムスタンプ
                 print_id = int(time.time())
                 print_script = f"""
                 <html><head><style>
                     @media print {{ @page {{ margin: 10mm; }} }}
-                    body {{ font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", sans-serif; padding:10px; font-size: 10px; color: #333; }}
+                    body {{ font-family: sans-serif; padding:10px; font-size: 10px; color: #333; }}
                     h2 {{ text-align:center; font-size: 16px; margin-bottom: 20px; }}
                     table {{ width:100%; border-collapse:collapse; table-layout: fixed; }}
                     th, td {{ border:1px solid #000; padding:4px 2px; text-align:center; height: 45px; word-wrap: break-word; overflow: hidden; }}
                     th {{ background-color: #f2f2f2; font-size: 10px; }}
                     td {{ font-size: 9px; line-height: 1.2; vertical-align: middle; }}
-                    /* 特定の列幅調整 */
-                    th:nth-child(1), td:nth-child(1) {{ width: 15%; }} /* 日時 */
-                    th:nth-child(2), td:nth-child(2) {{ width: 10%; }} /* 氏名 */
                 </style></head>
                 <body id="print-body-{print_id}">
                     <h2>経費精算書 ({form_type})</h2>
                     <p style="margin-bottom:10px;">氏名: {st.session_state['current_user']} / 期間: {start_date} ～ {end_date}</p>
                     <table>{rows_html}</table>
-                    <script>
-                        setTimeout(function() {{
-                            window.print();
-                        }}, 500);
-                    </script>
+                    <script>setTimeout(function() {{ window.print(); }}, 500);</script>
                 </body></html>
                 """
                 st.components.v1.html(print_script, height=600, scrolling=True)
@@ -234,8 +231,7 @@ try:
                     cols = st.columns([1, 1, 8])
                     if cols[1].button("削除", key=f"del_{idx}"):
                         ws_to_edit.delete_rows(int(row['row_idx']))
-                        st.cache_data.clear()
-                        st.rerun()
+                        st.cache_data.clear(); st.rerun()
                     if cols[0].button("修正", key=f"edit_{idx}"):
                         st.session_state[f"editing_{idx}"] = True
 
