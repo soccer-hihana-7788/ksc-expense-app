@@ -109,13 +109,12 @@ if form_type == "KSC 交通費清算書":
                 st.cache_data.clear()
                 st.success("データを保存しました。入力内容をクリアします。")
                 time.sleep(1)
-                st.rerun() # 画面を再描画して入力を空にする
+                st.rerun()
             except Exception as e: st.error(f"保存失敗: {e}")
 
 # 申請保存ロジック (B. 日当)
 else:
     st.header("📋 KSC 日当清算書 兼 受領書")
-    # 保存後に署名パッドもクリアするため、キーにタイムスタンプ等を使用
     if "form_key_suffix" not in st.session_state:
         st.session_state["form_key_suffix"] = time.time()
 
@@ -128,7 +127,6 @@ else:
         
         st.write("🖋️ **臨時コーチ署名**")
         sig_name = st.text_input("確認(臨時コーチ氏名)を入力してください")
-        # 署名パッド (keyを動的に変えることで保存後に確実にリセットさせる)
         canvas_result = st_canvas(
             fill_color="rgba(255, 255, 255, 1)", stroke_width=2, stroke_color="#000",
             background_color="#fff", height=120, width=300, drawing_mode="freedraw", 
@@ -152,11 +150,10 @@ else:
                     str(dt), cont, int(amt), "済" if c_c else "未", sig_name, sig_b64
                 ])
                 st.cache_data.clear()
-                # 保存成功後にフォームをリセットするためのフラグを更新
                 st.session_state["form_key_suffix"] = time.time()
                 st.success("データを保存しました。入力内容をクリアします。")
                 time.sleep(1)
-                st.rerun() # 完全に初期化
+                st.rerun()
             except Exception as e: st.error(f"保存失敗: {e}")
 
 # --- 4. 履歴表示・印刷・修正 ---
@@ -195,10 +192,14 @@ try:
 
             if st.button("🖨️ PDF印刷プレビューを表示"):
                 rows_html = ""
-                headers = display_df.columns.tolist()
-                if form_type == "KSC 日当清算書 兼 受領書": headers.append("確認(臨時コーチ署名)")
+                # ヘッダーの定義（修正箇所）
+                if form_type == "KSC 日当清算書 兼 受領書":
+                    headers_html = "<tr><th>申請日時</th><th>氏名</th><th>日時</th><th>臨時コーチ<br>依頼内容</th><th>金額</th><th>確認<br>(コーチ)</th><th>確認<br>(臨時コーチ氏名)</th><th>確認<br>(臨時コーチ署名)</th></tr>"
+                else:
+                    headers = display_df.columns.tolist()
+                    headers_html = "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
                 
-                rows_html += "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
+                rows_html += headers_html
                 for _, row in df_filtered.iterrows():
                     cells = [row[date_col].strftime('%Y-%m-%d') if c == date_col else row[c] for c in display_df.columns]
                     row_html = "".join(f"<td>{c}</td>" for c in cells)
@@ -215,9 +216,9 @@ try:
                     body {{ font-family: sans-serif; padding:10px; font-size: 10px; color: #333; }}
                     h2 {{ text-align:center; font-size: 16px; margin-bottom: 20px; }}
                     table {{ width:100%; border-collapse:collapse; table-layout: fixed; }}
-                    th, td {{ border:1px solid #000; padding:4px 2px; text-align:center; height: 45px; word-wrap: break-word; overflow: hidden; }}
-                    th {{ background-color: #f2f2f2; font-size: 10px; }}
-                    td {{ font-size: 9px; line-height: 1.2; vertical-align: middle; }}
+                    th, td {{ border:1px solid #000; padding:4px 2px; text-align:center; height: 50px; word-wrap: break-word; vertical-align: middle; }}
+                    th {{ background-color: #f2f2f2; font-size: 9px; line-height: 1.4; }}
+                    td {{ font-size: 9px; line-height: 1.2; }}
                 </style></head>
                 <body>
                     <h2>経費精算書 ({form_type})</h2>
