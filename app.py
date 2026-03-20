@@ -95,7 +95,6 @@ st.markdown("---")
 # 申請保存ロジック (A. 交通費)
 if form_type == "KSC 交通費清算書":
     st.header("🚗 KSC 交通費清算書")
-    # clear_on_submit=Trueで送信後クリアを有効化
     with st.form("transport_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
@@ -108,27 +107,32 @@ if form_type == "KSC 交通費清算書":
                 ws = sh.worksheet("transport_log")
                 ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state["current_user"], str(date), dest, purp, int(amt), rem])
                 st.cache_data.clear()
-                st.success("データを保存しました！入力内容をクリアします。")
-                time.sleep(1) # メッセージ確認用
-                st.rerun() # 再読み込みでフォームを完全に初期化
+                st.success("データを保存しました。入力内容をクリアします。")
+                time.sleep(1)
+                st.rerun() # 画面を再描画して入力を空にする
             except Exception as e: st.error(f"保存失敗: {e}")
 
 # 申請保存ロジック (B. 日当)
 else:
     st.header("📋 KSC 日当清算書 兼 受領書")
-    # 日当側も確実にクリアするため、状態管理用のkeyを設定したformを使用
-    with st.form("allowance_form_new", clear_on_submit=True):
+    # 保存後に署名パッドもクリアするため、キーにタイムスタンプ等を使用
+    if "form_key_suffix" not in st.session_state:
+        st.session_state["form_key_suffix"] = time.time()
+
+    with st.form("allowance_form", clear_on_submit=True):
         dt = st.date_input("日時", datetime.now())
         cont = st.text_area("臨時コーチ依頼内容")
         amt = st.number_input("金額 (円)", min_value=0, step=1)
         c_c = st.checkbox("確認 (コーチ)")
         c_t = st.checkbox("確認 (臨時コーチ)")
         
-        st.write("🖋️ **臨時コーチ署名** ※「確認(臨時コーチ)」にチェックを入れた場合のみ有効")
+        st.write("🖋️ **臨時コーチ署名**")
         sig_name = st.text_input("確認(臨時コーチ氏名)を入力してください")
+        # 署名パッド (keyを動的に変えることで保存後に確実にリセットさせる)
         canvas_result = st_canvas(
             fill_color="rgba(255, 255, 255, 1)", stroke_width=2, stroke_color="#000",
-            background_color="#fff", height=120, width=300, drawing_mode="freedraw", key="canvas_allowance_new"
+            background_color="#fff", height=120, width=300, drawing_mode="freedraw", 
+            key=f"canvas_{st.session_state['form_key_suffix']}"
         )
         
         if st.form_submit_button("スプレッドシートに保存"):
@@ -148,9 +152,11 @@ else:
                     str(dt), cont, int(amt), "済" if c_c else "未", sig_name, sig_b64
                 ])
                 st.cache_data.clear()
-                st.success("データを保存しました！入力内容をクリアします。")
+                # 保存成功後にフォームをリセットするためのフラグを更新
+                st.session_state["form_key_suffix"] = time.time()
+                st.success("データを保存しました。入力内容をクリアします。")
                 time.sleep(1)
-                st.rerun() # 再読み込みでフォーム・署名を初期化
+                st.rerun() # 完全に初期化
             except Exception as e: st.error(f"保存失敗: {e}")
 
 # --- 4. 履歴表示・印刷・修正 ---
@@ -213,9 +219,8 @@ try:
                     th {{ background-color: #f2f2f2; font-size: 10px; }}
                     td {{ font-size: 9px; line-height: 1.2; vertical-align: middle; }}
                 </style></head>
-                <body id="print-body-{print_id}">
+                <body>
                     <h2>経費精算書 ({form_type})</h2>
-                    <p style="margin-bottom:10px;">氏名: {st.session_state['current_user']} / 期間: {start_date} ～ {end_date}</p>
                     <table>{rows_html}</table>
                     <script>setTimeout(function() {{ window.print(); }}, 500);</script>
                 </body></html>
