@@ -192,7 +192,6 @@ try:
 
             if st.button("🖨️ PDF印刷プレビューを表示"):
                 rows_html = ""
-                # ヘッダーの定義（修正箇所）
                 if form_type == "KSC 日当清算書 兼 受領書":
                     headers_html = "<tr><th>申請日時</th><th>氏名</th><th>日時</th><th>臨時コーチ<br>依頼内容</th><th>金額</th><th>確認<br>(コーチ)</th><th>確認<br>(臨時コーチ氏名)</th><th>確認<br>(臨時コーチ署名)</th></tr>"
                 else:
@@ -205,8 +204,9 @@ try:
                     row_html = "".join(f"<td>{c}</td>" for c in cells)
                     if form_type == "KSC 日当清算書 兼 受領書":
                         sig = row.get('確認(臨時コーチ署名)', '')
-                        sig_img = f'<img src="data:image/png;base64,{sig}" style="height:40px; vertical-align:middle;">' if sig else ""
-                        row_html += f"<td>{sig_img}</td>"
+                        # 修正：署名画像が枠内にしっかり収まるようスタイル調整
+                        sig_img = f'<div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center;"><img src="data:image/png;base64,{sig}" style="max-width:100%; max-height:45px; object-fit:contain;"></div>' if sig else ""
+                        row_html += f'<td style="padding: 0;">{sig_img}</td>'
                     rows_html += f"<tr>{row_html}</tr>"
 
                 print_id = int(time.time())
@@ -219,6 +219,8 @@ try:
                     th, td {{ border:1px solid #000; padding:4px 2px; text-align:center; height: 50px; word-wrap: break-word; vertical-align: middle; }}
                     th {{ background-color: #f2f2f2; font-size: 9px; line-height: 1.4; }}
                     td {{ font-size: 9px; line-height: 1.2; }}
+                    /* 署名列の画像を強制的に収める設定 */
+                    td img {{ display: block; margin: 0 auto; }}
                 </style></head>
                 <body>
                     <h2>経費精算書 ({form_type})</h2>
