@@ -198,12 +198,9 @@ try:
                 btn_temp = p_col2.button("🖨️ 臨時コーチ用PDF印刷")
 
             if btn_coach or btn_temp:
-                # 印刷データの準備
                 if btn_temp:
-                    # 臨時コーチ用：フィルターに関係なく一番最後に保存された自分のデータを取得
                     print_df = df_user.sort_values(by='row_idx', ascending=False).head(1)
                 else:
-                    # コーチ用（通常）：日付フィルターされた全データ
                     print_df = df_filtered
 
                 rows_html = ""
@@ -219,8 +216,9 @@ try:
                     row_html = "".join(f"<td>{c}</td>" for c in cells)
                     if form_type == "KSC 日当清算書 兼 受領書":
                         sig = row.get('確認(臨時コーチ署名)', '')
-                        sig_img = f'<div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center;"><img src="data:image/png;base64,{sig}" style="max-width:100%; max-height:45px; object-fit:contain;"></div>' if sig else ""
-                        row_html += f'<td style="padding: 0;">{sig_img}</td>'
+                        # 修正：署名がはみ出ないようpaddingを入れ、max-heightをセルの高さ(50px)より小さい38pxに設定
+                        sig_img = f'<div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; padding:2px;"><img src="data:image/png;base64,{sig}" style="max-width:95%; max-height:38px; object-fit:contain;"></div>' if sig else ""
+                        row_html += f'<td style="padding: 0; overflow: hidden;">{sig_img}</td>'
                     rows_html += f"<tr>{row_html}</tr>"
 
                 print_script = f"""
@@ -232,7 +230,6 @@ try:
                     th, td {{ border:1px solid #000; padding:4px 2px; text-align:center; height: 50px; word-wrap: break-word; vertical-align: middle; }}
                     th {{ background-color: #f2f2f2; font-size: 9px; line-height: 1.4; }}
                     td {{ font-size: 9px; line-height: 1.2; }}
-                    td img {{ display: block; margin: 0 auto; }}
                 </style></head>
                 <body>
                     <h2>経費精算書 ({form_type})</h2>
