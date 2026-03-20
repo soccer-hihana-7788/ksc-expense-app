@@ -190,7 +190,22 @@ try:
             display_df[date_col] = display_df[date_col].dt.strftime('%Y-%m-%d')
             st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-            if st.button("🖨️ PDF印刷プレビューを表示"):
+            # --- 印刷機能 ---
+            p_col1, p_col2 = st.columns(2)
+            btn_coach = p_col1.button("🖨️ コーチ用PDF印刷" if form_type == "KSC 日当清算書 兼 受領書" else "🖨️ PDF印刷プレビューを表示")
+            btn_temp = False
+            if form_type == "KSC 日当清算書 兼 受領書":
+                btn_temp = p_col2.button("🖨️ 臨時コーチ用PDF印刷")
+
+            if btn_coach or btn_temp:
+                # 印刷データの準備
+                if btn_temp:
+                    # 臨時コーチ用：フィルターに関係なく一番最後に保存された自分のデータを取得
+                    print_df = df_user.sort_values(by='row_idx', ascending=False).head(1)
+                else:
+                    # コーチ用（通常）：日付フィルターされた全データ
+                    print_df = df_filtered
+
                 rows_html = ""
                 if form_type == "KSC 日当清算書 兼 受領書":
                     headers_html = "<tr><th>申請日時</th><th>氏名</th><th>日時</th><th>臨時コーチ<br>依頼内容</th><th>金額</th><th>確認<br>(コーチ)</th><th>確認<br>(臨時コーチ氏名)</th><th>確認<br>(臨時コーチ署名)</th></tr>"
@@ -199,17 +214,15 @@ try:
                     headers_html = "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
                 
                 rows_html += headers_html
-                for _, row in df_filtered.iterrows():
+                for _, row in print_df.iterrows():
                     cells = [row[date_col].strftime('%Y-%m-%d') if c == date_col else row[c] for c in display_df.columns]
                     row_html = "".join(f"<td>{c}</td>" for c in cells)
                     if form_type == "KSC 日当清算書 兼 受領書":
                         sig = row.get('確認(臨時コーチ署名)', '')
-                        # 修正：署名画像が枠内にしっかり収まるようスタイル調整
                         sig_img = f'<div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center;"><img src="data:image/png;base64,{sig}" style="max-width:100%; max-height:45px; object-fit:contain;"></div>' if sig else ""
                         row_html += f'<td style="padding: 0;">{sig_img}</td>'
                     rows_html += f"<tr>{row_html}</tr>"
 
-                print_id = int(time.time())
                 print_script = f"""
                 <html><head><style>
                     @media print {{ @page {{ margin: 10mm; }} }}
@@ -219,7 +232,6 @@ try:
                     th, td {{ border:1px solid #000; padding:4px 2px; text-align:center; height: 50px; word-wrap: break-word; vertical-align: middle; }}
                     th {{ background-color: #f2f2f2; font-size: 9px; line-height: 1.4; }}
                     td {{ font-size: 9px; line-height: 1.2; }}
-                    /* 署名列の画像を強制的に収める設定 */
                     td img {{ display: block; margin: 0 auto; }}
                 </style></head>
                 <body>
