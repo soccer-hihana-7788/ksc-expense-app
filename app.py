@@ -7,6 +7,7 @@ import os
 from streamlit_cookies_manager import EncryptedCookieManager
 from streamlit_drawable_canvas import st_canvas
 import base64
+import time
 
 # ページ設定
 st.set_page_config(page_title="KSC経費申請管理ツール", layout="wide")
@@ -35,7 +36,7 @@ def check_auth():
     password = st.text_input("パスワード", type="password")
     if st.button("ログイン"):
         if user_id == "KSC" and password == "kuma2019":
-            expire_date = datetime.now() + timedelta(hours=2) # 2時間維持
+            expire_date = datetime.now() + timedelta(hours=2)
             cookies["auth_status"] = "ok"
             cookies["login_expire"] = expire_date.isoformat()
             cookies.save()
@@ -105,7 +106,7 @@ if form_type == "KSC 交通費清算書":
             try:
                 ws = sh.worksheet("transport_log")
                 ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state["current_user"], str(date), dest, purp, int(amt), rem])
-                st.cache_data.clear() # キャッシュをクリアして最新化
+                st.cache_data.clear()
                 st.success("データを保存しました！"); st.rerun()
             except Exception as e: st.error(f"保存失敗: {e}")
 
@@ -143,12 +144,12 @@ else:
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state["current_user"], 
                 str(dt), cont, int(amt), "済" if c_c else "未", sig_name, sig_b64
             ])
-            st.cache_data.clear() # キャッシュをクリアして最新化
+            st.cache_data.clear()
             st.success("データを保存しました！"); st.rerun()
         except Exception as e: st.error(f"保存失敗: {e}")
 
 # --- 4. 履歴表示・印刷・修正 ---
-@st.cache_data(ttl=60) # 60秒間はAPIを叩かずキャッシュを使用
+@st.cache_data(ttl=60)
 def fetch_records(sheet_name):
     ws = sh.worksheet(sheet_name)
     return ws.get_all_records()
@@ -185,28 +186,48 @@ try:
                 rows_html = ""
                 headers = display_df.columns.tolist()
                 if form_type == "KSC 日当清算書 兼 受領書": headers.append("確認(臨時コーチ署名)")
+                
                 rows_html += "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
-                for idx, row in df_filtered.iterrows():
+                for _, row in df_filtered.iterrows():
                     cells = [row[date_col].strftime('%Y-%m-%d') if c == date_col else row[c] for c in display_df.columns]
                     row_html = "".join(f"<td>{c}</td>" for c in cells)
                     if form_type == "KSC 日当清算書 兼 受領書":
                         sig = row.get('確認(臨時コーチ署名)', '')
-                        sig_img = f'<img src="data:image/png;base64,{sig}" style="height:40px;">' if sig else ""
+                        sig_img = f'<img src="data:image/png;base64,{sig}" style="height:40px; vertical-align:middle;">' if sig else ""
                         row_html += f"<td>{sig_img}</td>"
                     rows_html += f"<tr>{row_html}</tr>"
+
+                # 改善：文字サイズ調整と2回目動作不備の解消用タイムスタンプ
+                print_id = int(time.time())
                 print_script = f"""
                 <html><head><style>
-                    body{{font-family:sans-serif; padding:10px; font-size: 11px;}}
-                    table{{width:100%; border-collapse:collapse; table-layout: fixed; word-break: break-all;}}
-                    th,td{{border:1px solid #000; padding:5px; text-align:center; height: 50px;}}
-                    th{{background-color: #f2f2f2;}} h2{{text-align:center;}}
-                </style></head><body><h2>経費精算書 ({form_type})</h2><table>{rows_html}</table><script>window.print();</script></body></html>
+                    @media print {{ @page {{ margin: 10mm; }} }}
+                    body {{ font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", sans-serif; padding:10px; font-size: 10px; color: #333; }}
+                    h2 {{ text-align:center; font-size: 16px; margin-bottom: 20px; }}
+                    table {{ width:100%; border-collapse:collapse; table-layout: fixed; }}
+                    th, td {{ border:1px solid #000; padding:4px 2px; text-align:center; height: 45px; word-wrap: break-word; overflow: hidden; }}
+                    th {{ background-color: #f2f2f2; font-size: 10px; }}
+                    td {{ font-size: 9px; line-height: 1.2; vertical-align: middle; }}
+                    /* 特定の列幅調整 */
+                    th:nth-child(1), td:nth-child(1) {{ width: 15%; }} /* 日時 */
+                    th:nth-child(2), td:nth-child(2) {{ width: 10%; }} /* 氏名 */
+                </style></head>
+                <body id="print-body-{print_id}">
+                    <h2>経費精算書 ({form_type})</h2>
+                    <p style="margin-bottom:10px;">氏名: {st.session_state['current_user']} / 期間: {start_date} ～ {end_date}</p>
+                    <table>{rows_html}</table>
+                    <script>
+                        setTimeout(function() {{
+                            window.print();
+                        }}, 500);
+                    </script>
+                </body></html>
                 """
-                st.components.v1.html(print_script, height=500, scrolling=True)
+                st.components.v1.html(print_script, height=600, scrolling=True)
 
             st.markdown("---")
             st.write("🔧 個別データの修正・削除")
-            ws_to_edit = sh.worksheet(current_ws_name) # 更新用
+            ws_to_edit = sh.worksheet(current_ws_name)
             for idx, row in df_filtered.iterrows():
                 row_date_str = row[date_col].strftime('%Y-%m-%d')
                 with st.expander(f"📌 {row_date_str} - {row.get('行先') or row.get('臨時コーチ依頼内容')} ({row['金額']}円)"):
@@ -226,8 +247,7 @@ try:
                                 n_r = st.text_area("備考", row['備考'])
                                 if st.form_submit_button("更新"):
                                     ws_to_edit.update(f"A{row['row_idx']}:G{row['row_idx']}", [[datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row['氏名'], str(n_d), n_ds, n_p, int(n_a), n_r]])
-                                    st.cache_data.clear()
-                                    st.session_state[f"editing_{idx}"] = False; st.rerun()
+                                    st.cache_data.clear(); st.session_state[f"editing_{idx}"] = False; st.rerun()
                             else:
                                 n_dt = st.date_input("日時", row[date_col]); n_c = st.text_area("臨時コーチ依頼内容", row['臨時コーチ依頼内容'])
                                 n_a = st.number_input("金額", value=int(row['金額']))
@@ -237,8 +257,7 @@ try:
                                     ws_to_edit.update_cell(row['row_idx'], 4, n_c)
                                     ws_to_edit.update_cell(row['row_idx'], 5, int(n_a))
                                     ws_to_edit.update_cell(row['row_idx'], 6, "済" if n_cc else "未")
-                                    st.cache_data.clear()
-                                    st.session_state[f"editing_{idx}"] = False; st.rerun()
+                                    st.cache_data.clear(); st.session_state[f"editing_{idx}"] = False; st.rerun()
                         if st.button("キャンセル", key=f"cancel_{idx}"):
                             st.session_state[f"editing_{idx}"] = False; st.rerun()
         else: st.info("データがありません。")
