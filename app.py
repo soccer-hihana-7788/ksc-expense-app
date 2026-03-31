@@ -181,12 +181,12 @@ try:
             # --- 期間選択（印刷範囲指定）セクション ---
             st.write("📅 **印刷範囲の指定**")
             
-            # 表示・非表示ボタンの設置
-            col_btn1, col_btn2, _ = st.columns([1, 1, 8])
+            # 表示・非表示ボタンの設置（比率を調整して1行に収める）
+            col_btn1, col_btn2, _ = st.columns([1.5, 1.5, 7])
             if "show_list" not in st.session_state:
                 st.session_state["show_list"] = True
             
-            if col_btn1.button("一覧表示"):
+            if col_btn1.button("一覧を表示"):
                 st.session_state["show_list"] = True
             if col_btn2.button("一覧を非表示"):
                 st.session_state["show_list"] = False
@@ -198,18 +198,14 @@ try:
             mask = (df_user[date_col].dt.date >= start_date) & (df_user[date_col].dt.date <= end_date)
             df_filtered = df_user.loc[mask].sort_values(by=date_col, ascending=False).reset_index(drop=True)
             
-            # フィルタリング後のデータに選択列（チェックボックス）を追加
             if st.session_state["show_list"]:
-                # data_editorを使用してチェックボックス列を作成
                 df_with_select = df_filtered.copy()
                 df_with_select.insert(0, "選択", False)
                 
-                # 表示用に不要な列を除く
                 cols_to_show = df_with_select.columns.tolist()
                 if 'row_idx' in cols_to_show: cols_to_show.remove('row_idx')
                 if '確認(臨時コーチ署名)' in cols_to_show: cols_to_show.remove('確認(臨時コーチ署名)')
                 
-                # 日付フォーマット調整
                 df_with_select[date_col] = df_with_select[date_col].dt.strftime('%Y-%m-%d')
                 
                 edited_df = st.data_editor(
@@ -221,12 +217,11 @@ try:
                     key=f"editor_{current_ws_name}"
                 )
                 
-                # チェックされた行のインデックスを取得
                 selected_indices = edited_df.index[edited_df["選択"]].tolist()
                 df_to_edit = df_filtered.iloc[selected_indices]
             else:
                 st.info("一覧は非表示になっています。")
-                df_to_edit = pd.DataFrame() # 非表示時は編集対象なし
+                df_to_edit = pd.DataFrame()
 
             # --- 印刷ボタン ---
             p_col1, p_col2 = st.columns(2)
@@ -250,7 +245,6 @@ try:
                 
                 rows_html += headers_html
                 for _, row in print_df.iterrows():
-                    # 印刷用データの日付処理
                     display_cols = [c for c in df_filtered.columns if c != 'row_idx' and c != '確認(臨時コーチ署名)']
                     row_html = ""
                     for c in display_cols:
@@ -284,7 +278,6 @@ try:
 
             st.markdown("---")
             st.write("🔧 個別データの修正・削除")
-            # チェックされたデータのみを表示。何もなければ案内。
             if df_to_edit.empty:
                 st.info("一覧の「選択」列にチェックを入れると、ここに修正・削除フォームが表示されます。")
             else:
