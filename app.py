@@ -180,18 +180,53 @@ try:
             
             # --- 期間選択（印刷範囲指定）セクション ---
             st.write("📅 **印刷範囲の指定**")
+            
+            # 表示・非表示ボタンの設置
+            col_btn1, col_btn2, _ = st.columns([1, 1, 8])
+            if "show_list" not in st.session_state:
+                st.session_state["show_list"] = True
+            
+            if col_btn1.button("一覧表示"):
+                st.session_state["show_list"] = True
+            if col_btn2.button("一覧を非表示"):
+                st.session_state["show_list"] = False
+
             col_d1, col_d2 = st.columns(2)
             with col_d1: start_date = st.date_input("開始日", df_user[date_col].min().date())
             with col_d2: end_date = st.date_input("終了日", df_user[date_col].max().date())
             
             mask = (df_user[date_col].dt.date >= start_date) & (df_user[date_col].dt.date <= end_date)
-            df_filtered = df_user.loc[mask].sort_values(by=date_col, ascending=False)
+            df_filtered = df_user.loc[mask].sort_values(by=date_col, ascending=False).reset_index(drop=True)
             
-            display_df = df_filtered.drop(columns=['row_idx'])
-            if '確認(臨時コーチ署名)' in display_df.columns:
-                display_df = display_df.drop(columns=['確認(臨時コーチ署名)'])
-            display_df[date_col] = display_df[date_col].dt.strftime('%Y-%m-%d')
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            # フィルタリング後のデータに選択列（チェックボックス）を追加
+            if st.session_state["show_list"]:
+                # data_editorを使用してチェックボックス列を作成
+                df_with_select = df_filtered.copy()
+                df_with_select.insert(0, "選択", False)
+                
+                # 表示用に不要な列を除く
+                cols_to_show = df_with_select.columns.tolist()
+                if 'row_idx' in cols_to_show: cols_to_show.remove('row_idx')
+                if '確認(臨時コーチ署名)' in cols_to_show: cols_to_show.remove('確認(臨時コーチ署名)')
+                
+                # 日付フォーマット調整
+                df_with_select[date_col] = df_with_select[date_col].dt.strftime('%Y-%m-%d')
+                
+                edited_df = st.data_editor(
+                    df_with_select[cols_to_show],
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={"選択": st.column_config.CheckboxColumn(required=True)},
+                    disabled=[c for c in cols_to_show if c != "選択"],
+                    key=f"editor_{current_ws_name}"
+                )
+                
+                # チェックされた行のインデックスを取得
+                selected_indices = edited_df.index[edited_df["選択"]].tolist()
+                df_to_edit = df_filtered.iloc[selected_indices]
+            else:
+                st.info("一覧は非表示になっています。")
+                df_to_edit = pd.DataFrame() # 非表示時は編集対象なし
 
             # --- 印刷ボタン ---
             p_col1, p_col2 = st.columns(2)
@@ -210,13 +245,19 @@ try:
                 if form_type == "KSC 日当清算書 兼 受領書":
                     headers_html = "<tr><th>申請日時</th><th>氏名</th><th>日時</th><th>臨時コーチ<br>依頼内容</th><th>金額</th><th>確認<br>(コーチ)</th><th>確認<br>(臨時コーチ氏名)</th><th>確認<br>(臨時コーチ署名)</th></tr>"
                 else:
-                    headers = display_df.columns.tolist()
+                    headers = [c for c in df_filtered.columns if c != 'row_idx']
                     headers_html = "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
                 
                 rows_html += headers_html
                 for _, row in print_df.iterrows():
-                    cells = [row[date_col].strftime('%Y-%m-%d') if c == date_col else row[c] for c in display_df.columns]
-                    row_html = "".join(f"<td>{c}</td>" for c in cells)
+                    # 印刷用データの日付処理
+                    display_cols = [c for c in df_filtered.columns if c != 'row_idx' and c != '確認(臨時コーチ署名)']
+                    row_html = ""
+                    for c in display_cols:
+                        val = row[c]
+                        if c == date_col: val = pd.to_datetime(val).strftime('%Y-%m-%d')
+                        row_html += f"<td>{val}</td>"
+                        
                     if form_type == "KSC 日当清算書 兼 受領書":
                         sig = row.get('確認(臨時コーチ署名)', '')
                         sig_img = f'<div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; padding:2px;"><img src="data:image/png;base64,{sig}" style="max-width:95%; max-height:38px; object-fit:contain;"></div>' if sig else ""
@@ -243,37 +284,41 @@ try:
 
             st.markdown("---")
             st.write("🔧 個別データの修正・削除")
-            ws_to_edit = sh.worksheet(current_ws_name)
-            for idx, row in df_filtered.iterrows():
-                row_date_str = row[date_col].strftime('%Y-%m-%d')
-                with st.expander(f"📌 {row_date_str} - {row.get('行先') or row.get('臨時コーチ依頼内容')} ({row['金額']}円)"):
-                    cols = st.columns([1, 1, 8])
-                    if cols[1].button("削除", key=f"del_{idx}"):
-                        ws_to_edit.delete_rows(int(row['row_idx']))
-                        st.cache_data.clear(); st.rerun()
-                    if cols[0].button("修正", key=f"edit_{idx}"):
-                        st.session_state[f"editing_{idx}"] = True
+            # チェックされたデータのみを表示。何もなければ案内。
+            if df_to_edit.empty:
+                st.info("一覧の「選択」列にチェックを入れると、ここに修正・削除フォームが表示されます。")
+            else:
+                ws_to_edit = sh.worksheet(current_ws_name)
+                for idx, row in df_to_edit.iterrows():
+                    row_date_str = pd.to_datetime(row[date_col]).strftime('%Y-%m-%d')
+                    with st.expander(f"📌 {row_date_str} - {row.get('行先') or row.get('臨時コーチ依頼内容')} ({row['金額']}円)"):
+                        cols = st.columns([1, 1, 8])
+                        if cols[1].button("削除", key=f"del_{idx}"):
+                            ws_to_edit.delete_rows(int(row['row_idx']))
+                            st.cache_data.clear(); st.rerun()
+                        if cols[0].button("修正", key=f"edit_{idx}"):
+                            st.session_state[f"editing_{idx}"] = True
 
-                    if st.session_state.get(f"editing_{idx}"):
-                        with st.form(f"edit_form_{idx}"):
-                            if form_type == "KSC 交通費清算書":
-                                n_d = st.date_input("日付", row[date_col]); n_ds = st.text_input("行先", row['行先'])
-                                n_p = st.text_input("目的", row['目的']); n_a = st.number_input("金額", value=int(row['金額']))
-                                n_r = st.text_area("備考", row['備考'])
-                                if st.form_submit_button("更新"):
-                                    ws_to_edit.update(f"A{row['row_idx']}:G{row['row_idx']}", [[datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row['氏名'], str(n_d), n_ds, n_p, int(n_a), n_r]])
-                                    st.cache_data.clear(); st.session_state[f"editing_{idx}"] = False; st.rerun()
-                            else:
-                                n_dt = st.date_input("日時", row[date_col]); n_c = st.text_area("臨時コーチ依頼内容", row['臨時コーチ依頼内容'])
-                                n_a = st.number_input("金額", value=int(row['金額']))
-                                n_cc = st.checkbox("確認(コーチ)", row['確認(コーチ)']=="済")
-                                if st.form_submit_button("更新"):
-                                    ws_to_edit.update_cell(row['row_idx'], 3, str(n_dt))
-                                    ws_to_edit.update_cell(row['row_idx'], 4, n_c)
-                                    ws_to_edit.update_cell(row['row_idx'], 5, int(n_a))
-                                    ws_to_edit.update_cell(row['row_idx'], 6, "済" if n_cc else "未")
-                                    st.cache_data.clear(); st.session_state[f"editing_{idx}"] = False; st.rerun()
-                        if st.button("キャンセル", key=f"cancel_{idx}"):
-                            st.session_state[f"editing_{idx}"] = False; st.rerun()
+                        if st.session_state.get(f"editing_{idx}"):
+                            with st.form(f"edit_form_{idx}"):
+                                if form_type == "KSC 交通費清算書":
+                                    n_d = st.date_input("日付", pd.to_datetime(row[date_col])); n_ds = st.text_input("行先", row['行先'])
+                                    n_p = st.text_input("目的", row['目的']); n_a = st.number_input("金額", value=int(row['金額']))
+                                    n_r = st.text_area("備考", row['備考'])
+                                    if st.form_submit_button("更新"):
+                                        ws_to_edit.update(f"A{row['row_idx']}:G{row['row_idx']}", [[datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row['氏名'], str(n_d), n_ds, n_p, int(n_a), n_r]])
+                                        st.cache_data.clear(); st.session_state[f"editing_{idx}"] = False; st.rerun()
+                                else:
+                                    n_dt = st.date_input("日時", pd.to_datetime(row[date_col])); n_c = st.text_area("臨時コーチ依頼内容", row['臨時コーチ依頼内容'])
+                                    n_a = st.number_input("金額", value=int(row['金額']))
+                                    n_cc = st.checkbox("確認(コーチ)", row['確認(コーチ)']=="済")
+                                    if st.form_submit_button("更新"):
+                                        ws_to_edit.update_cell(row['row_idx'], 3, str(n_dt))
+                                        ws_to_edit.update_cell(row['row_idx'], 4, n_c)
+                                        ws_to_edit.update_cell(row['row_idx'], 5, int(n_a))
+                                        ws_to_edit.update_cell(row['row_idx'], 6, "済" if n_cc else "未")
+                                        st.cache_data.clear(); st.session_state[f"editing_{idx}"] = False; st.rerun()
+                            if st.button("キャンセル", key=f"cancel_{idx}"):
+                                st.session_state[f"editing_{idx}"] = False; st.rerun()
         else: st.info("データがありません。")
 except Exception as e: st.error(f"エラー: {e}")
