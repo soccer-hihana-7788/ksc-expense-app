@@ -178,9 +178,12 @@ try:
             date_col = '日付' if form_type == "KSC 交通費清算書" else '日時'
             df_user[date_col] = pd.to_datetime(df_user[date_col])
             
+            # --- 期間選択（印刷範囲指定）セクション ---
+            st.write("📅 **印刷範囲の指定**")
             col_d1, col_d2 = st.columns(2)
             with col_d1: start_date = st.date_input("開始日", df_user[date_col].min().date())
             with col_d2: end_date = st.date_input("終了日", df_user[date_col].max().date())
+            
             mask = (df_user[date_col].dt.date >= start_date) & (df_user[date_col].dt.date <= end_date)
             df_filtered = df_user.loc[mask].sort_values(by=date_col, ascending=False)
             
@@ -190,7 +193,7 @@ try:
             display_df[date_col] = display_df[date_col].dt.strftime('%Y-%m-%d')
             st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-            # --- 印刷機能 ---
+            # --- 印刷ボタン ---
             p_col1, p_col2 = st.columns(2)
             btn_coach = p_col1.button("🖨️ コーチ用PDF印刷" if form_type == "KSC 日当清算書 兼 受領書" else "🖨️ PDF印刷プレビューを表示")
             btn_temp = False
@@ -216,7 +219,6 @@ try:
                     row_html = "".join(f"<td>{c}</td>" for c in cells)
                     if form_type == "KSC 日当清算書 兼 受領書":
                         sig = row.get('確認(臨時コーチ署名)', '')
-                        # 修正：署名がはみ出ないようpaddingを入れ、max-heightをセルの高さ(50px)より小さい38pxに設定
                         sig_img = f'<div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; padding:2px;"><img src="data:image/png;base64,{sig}" style="max-width:95%; max-height:38px; object-fit:contain;"></div>' if sig else ""
                         row_html += f'<td style="padding: 0; overflow: hidden;">{sig_img}</td>'
                     rows_html += f"<tr>{row_html}</tr>"
